@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Predict | k* predictor</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css"></head>
+<body data-mode="user">
+<header class="top"><div class="wrap">
+  <a class="brand" href="predict.html"><svg viewBox="0 0 28 28" aria-hidden="true"><rect x="5" y="9" width="14" height="14" rx="1" fill="none" stroke="#1D5C78" stroke-width="2"/><rect x="9" y="5" width="14" height="14" rx="1" fill="none" stroke="#1D5C78" stroke-width="2" opacity=".55"/><circle cx="14" cy="14" r="2.6" fill="#C98512"/></svg><span>k<i>*</i> predictor</span></a>
+  <nav class="nav" aria-label="Pages"><a href="predict.html" aria-current="page">Predict</a><a href="batch.html">Batch</a><a href="developer.html" class="dev-only">Developer</a><a href="research.html">Research</a></nav>
+  <div class="role">Signed in as <b id="rolename"></b> <a href="index.html">Switch role</a></div>
+</div></header>
+<main><div class="wrap">
+<div class="intro">
+  <h1>Predict oxygen exchange for a perovskite cathode</h1>
+  <p class="explorer-only">Type a material formula and a temperature, or enter every descriptor yourself. The result opens on the next page.</p>
+  <p class="dev-only">Inputs are sent as JSON to the Flask endpoint, reordered to the training column order, scaled and passed to the model. Each stage is shown on the result page.</p>
+</div>
+<div class="seg" role="group" aria-label="Input type" style="margin-bottom:18px">
+  <button type="button" id="by-name" aria-pressed="true">By material name</button>
+  <button type="button" id="by-desc" aria-pressed="false">By descriptors</button>
+</div>
+<section class="panel" id="namepanel" style="max-width:860px">
+  <h2>Material and temperature</h2>
+  <p class="sub">Type the formula and temperature. The properties are worked out from the composition, so you don't enter any descriptors.</p>
+  <div id="loadmsg2" class="msg" hidden></div>
+  <form id="nameform" novalidate>
+    <div class="fields">
+      <div class="field"><label for="formula">Material formula</label><input id="formula" type="text" value="La0.6Sr0.4Co0.2Fe0.8O3" autocomplete="off" spellcheck="false"><small>A-site elements first, then B-site, ending in O3</small></div>
+      <div class="field"><label for="tempname">Temperature (&deg;C)</label><input id="tempname" type="number" step="any" value="800"></div>
+    </div>
+    <div class="field" style="margin-top:14px"><label for="exname">Examples</label><select id="exname"></select><small id="exhint"></small></div>
+    <div class="modelpick dev-only"><label for="model2">Model</label><select id="model2"><option value="svr">SVR pipeline (scaler + SVR)</option></select></div>
+    <div class="actions"><button class="btn primary" type="submit" id="go2">Predict k*</button></div>
+    <div id="err2" class="msg" role="alert" hidden></div>
+  </form>
+  <p class="sub" id="elhint" style="margin-top:16px"></p>
+</section>
+<section class="panel" id="descpanel" aria-labelledby="h-in" style="max-width:860px" hidden>
+  <h2 id="h-in">Material and conditions</h2>
+  <p class="sub">Starts from an example material. Pick a test input to try others.</p>
+  <div id="loadmsg" class="msg" hidden></div>
+  <form id="form" novalidate>
+    <div class="field" id="exbox" hidden><label for="examples">Test inputs</label><select id="examples"></select><small id="exnote"></small></div>
+    <div id="groups"></div>
+    <div class="modelpick dev-only" id="modelpick"><label for="model">Model</label>
+      <select id="model"><option value="svr">SVR pipeline (scaler + SVR)</option></select></div>
+    <div class="actions">
+      <button class="btn primary" type="submit" id="go">Predict k*</button>
+      <button class="btn ghost" type="button" id="reset">Reset to example</button>
+    </div>
+    <div id="err" class="msg" role="alert" hidden></div>
+  </form>
+</section>
+</div></main>
+<script src="config.js"></script><script src="ui.js"></script>
+<script>
+(() => {
+  const ROLE = (() => { try { return localStorage.getItem("kstar-role"); } catch { return null; } })();
+  if (ROLE !== "dev" && ROLE !== "user") { location.replace("index.html"); return; }
+  document.body.dataset.mode = ROLE;
+  document.getElementById("rolename").textContent = ROLE === "dev" ? "Developer" : "Normal user";
+
+  const $ = (s, r = document) => r.querySelector(s);
+  const store = {
+    get(k){ try { return localStorage.getItem(k); } catch { return null; } },
+    set(k,v){ try { localStorage.setItem(k,v); } catch {} }
+  };
+
+  let schema = null;
+  
+
+  async function loadSchema(){
+    try {
+      const r = await api("/api/schema");
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "Could not load the model.");
+      schema = data;
+    } catch (e) {
+      const box = $("#loadmsg");
+      box.textContent = e.message + " The prediction form is unavailable until the model loads.";
+      box.hidden = false;
+      $("#loadmsg2").textContent = box.textContent; $("#loadmsg2").hidden = false;
+      $("#go").disabled = true; $("#go2").disabled = true;
+      return;
+    }
+    buildForm();
+    buildExamples();
+    initNameForm();
+    if (schema.models.rf) {
+      const o = document.createElement("option");
+      o.value = "rf"; o.textContent = "Random Forest (100 trees)";
+      $("#model").appendChild(o);
+    }
+  }
+
+  const hasTemp = () => schema.features.some(f => f.name === "1000/T");
+  const tempToInv = c => 1000 / (c + 273.15);
+  const invToTemp = i => 1000 / i - 273.15;
+
+  function fieldHTML(f){
+    const id = "f_" + f.name.replace(/[^a-z0-9]/gi, "_");
+    const val = f.default ?? "";
+    const raw = f.name === "1000/T";
+    return `<div class="field${raw ? " dev-only" : ""}" data-name="${f.name}">
+      <label for="${id}">${f.name}</label>
+      <input id="${id}" name="${f.name}" type="number" step="any" inputmode="decimal" value="${val}" data-default="${val}">
+      ${f.hint ? `<small>${f.hint}</small>` : ""}</div>`;
+  }
+
+  function buildForm(){
+    const groups = {};
+    schema.features.forEach(f => (groups[f.group] ||= []).push(f));
+    const names = Object.keys(groups).sort((a,b) => GROUP_ORDER.indexOf(a) - GROUP_ORDER.indexOf(b));
+    $("#groups").innerHTML = names.map(g => {
+      let extra = "";
+      if (g === "Conditions" && hasTemp()) {
+        const inv = groups[g].find(f => f.name === "1000/T").default;
+        const c = inv ? Math.round(invToTemp(inv)) : 800;
+        extra = `<div class="field" data-name="tempc">
+          <label for="tempc">Temperature (&deg;C)</label>
+          <input id="tempc" type="number" step="any" value="${c}" data-default="${c}">
+          <small>Converted to 1000/T for the model</small></div>`;
+      }
+      return `<fieldset><legend>${g}</legend><div class="fields">${extra}${groups[g].map(fieldHTML).join("")}</div></fieldset>`;
+    }).join("");
+
+    if (hasTemp()) {
+      const inv = $('input[name="1000/T"]'), tc = $("#tempc");
+      tc.addEventListener("input", () => { const c = parseFloat(tc.value); if (isFinite(c) && c > -273) inv.value = tempToInv(c).toFixed(4); });
+      inv.addEventListener("input", () => { const i = parseFloat(inv.value); if (isFinite(i) && i > 0) tc.value = Math.round(invToTemp(i)); });
+    }
+  }
+
+  function setValues(vals){
+    Object.entries(vals).forEach(([k, v]) => {
+      const el = $(`input[name="${CSS.escape(k)}"]`);
+      if (el) el.value = v === null ? "" : v;
+    });
+    const inv = $('input[name="1000/T"]'), tc = $("#tempc");
+    if (inv && tc && isFinite(parseFloat(inv.value)) && parseFloat(inv.value) > 0) tc.value = Math.round(invToTemp(parseFloat(inv.value)));
+    document.querySelectorAll("#groups .field").forEach(f => f.classList.remove("bad"));
+    $("#err").hidden = true;
+  }
+
+  function buildExamples(){
+    const base = {};
+    schema.features.forEach(f => base[f.name] = f.default);
+    const list = [
+      { label: "Choose a test input\u2026", values: null, note: "" },
+      ...(schema.examples || []).map(e => ({
+        label: "Real: " + e.label, values: e.values,
+        note: "From the dataset. Measured log k* = " + e.true_log_kstar.toFixed(2) + "; the prediction should be close."
+      })),
+      { label: "Wrong: an empty field", values: { ...base, Gap: null },
+        note: "Should be refused with a message asking for a number for Gap." },
+      { label: "Wrong: far outside the data", values: { ...base, TEC: 80, E_above_hull: 900, "1000/T": 0.3 },
+        note: "Should still predict, but show a warning that inputs are outside the training range." },
+    ];
+    const sel = $("#examples");
+    sel.innerHTML = list.map((e, i) => `<option value="${i}">${esc(e.label)}</option>`).join("");
+    sel.onchange = () => {
+      const e = list[+sel.value];
+      $("#exnote").textContent = e.note;
+      if (e.values) setValues(e.values);
+    };
+    $("#exbox").hidden = false;
+  }
+
+  $("#reset").onclick = () => {
+    if ($("#examples")) { $("#examples").value = "0"; $("#exnote").textContent = ""; }
+    document.querySelectorAll("#groups input").forEach(i => { i.value = i.dataset.default; i.closest(".field").classList.remove("bad"); });
+    $("#err").hidden = true;
+  };
+
+  function collect(){
+    const values = {};
+    let bad = [];
+    schema.features.forEach(f => {
+      const el = $(`input[name="${CSS.escape(f.name)}"]`);
+      const ok = el.value.trim() !== "" && isFinite(Number(el.value));
+      el.closest(".field").classList.toggle("bad", !ok);
+      if (!ok) bad.push(f.name);
+      values[f.name] = el.value.trim() === "" ? null : Number(el.value);
+    });
+    return { values, bad };
+  }
+
+  /* ---------- predict ---------- */
+  $("#form").addEventListener("submit", async e => {
+    e.preventDefault();
+    if (!schema) return;
+    const err = $("#err"); err.hidden = true;
+    const { values, bad } = collect();
+    if (bad.length) {
+      err.textContent = "Enter a number for: " + bad.join(", ") + ".";
+      err.hidden = false; return;
+    }
+    const payload = { model: $("#model").value, values };
+    const btn = $("#go"); btn.disabled = true; btn.textContent = "Predicting\u2026";
+    try {
+      const t0 = performance.now();
+      const r = await api("/api/predict", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      const data = await r.json();
+      const roundtrip = performance.now() - t0;
+      if (!r.ok) throw new Error(data.error || "The prediction failed.");
+      try { sessionStorage.setItem("kstar-last", JSON.stringify({ payload, data, roundtrip, schema: { scale: schema.scale, sklearn_version: schema.sklearn_version } })); } catch {}
+      location.href = "result.html";
+      return;
+    } catch (ex) {
+      err.textContent = ex.message; err.hidden = false; toast(ex.message, "error");
+    } finally {
+      btn.disabled = false; btn.textContent = "Predict k*";
+    }
+  });
+
+  
+
+  const GROUP_ORDER = ["Conditions", "A-site", "B-site", "Structure and properties"];
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
+  function inputMode(name){
+    $("#namepanel").hidden = !name; $("#descpanel").hidden = name;
+    $("#by-name").setAttribute("aria-pressed", String(name)); $("#by-desc").setAttribute("aria-pressed", String(!name));
+    try { sessionStorage.setItem("kstar-input", name ? "name" : "desc"); } catch {}
+  }
+  $("#by-name").onclick = () => inputMode(true);
+  $("#by-desc").onclick = () => inputMode(false);
+  inputMode((() => { try { return sessionStorage.getItem("kstar-input") !== "desc"; } catch { return true; } })());
+
+  function initNameForm(){
+    if (!schema.composition) {
+      $("#by-name").hidden = true; inputMode(false); return;
+    }
+    const ex = (schema.examples || []).filter(e => e.formula);
+    $("#exname").innerHTML = '<option value="">Pick an example\u2026</option>' + ex.map((e, i) => `<option value="${i}">${esc(e.formula)} at ${e.temp_c} \u00b0C (measured log k* ${e.true_log_kstar.toFixed(2)})</option>`).join("");
+    $("#exname").onchange = () => {
+      const e = ex[+$("#exname").value]; if (!e) return;
+      $("#formula").value = e.formula; $("#tempname").value = e.temp_c;
+      $("#exhint").textContent = "From the dataset; the prediction should be close to the measured value.";
+    };
+    if (schema.models.rf) { const o = document.createElement("option"); o.value = "rf"; o.textContent = "Random Forest (100 trees)"; $("#model2").appendChild(o); }
+    if (schema.elements) $("#elhint").textContent = "Supported A-site elements: " + schema.elements.A.join(", ") + ". Supported B-site elements: " + schema.elements.B.join(", ") + ".";
+  }
+
+  $("#nameform").addEventListener("submit", async e => {
+    e.preventDefault();
+    const err = $("#err2"); err.hidden = true;
+    if (!schema) { err.textContent = "The model has not loaded yet."; err.hidden = false; return; }
+    const formula = $("#formula").value.trim(), temp_c = parseFloat($("#tempname").value), model = $("#model2").value;
+    const btn = $("#go2"); btn.disabled = true; btn.textContent = "Predicting\u2026";
+    try {
+      const t0 = performance.now();
+      const r = await api("/api/predict_composition", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ formula, temp_c, model }) });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "The prediction failed.");
+      const payload = { model, formula, temp_c, values: data.descriptors };
+      try { sessionStorage.setItem("kstar-last", JSON.stringify({ payload, data, roundtrip: performance.now() - t0, formula: data.formula, sites: data.sites, temp_c, schema: { scale: schema.scale, sklearn_version: schema.sklearn_version } })); } catch {}
+      location.href = "result.html";
+    } catch (ex) {
+      err.textContent = ex.message; err.hidden = false; toast(ex.message, "error");
+      btn.disabled = false; btn.textContent = "Predict k*";
+    }
+  });
+
+  loadSchema();
+
+})();
+</script></body></html>

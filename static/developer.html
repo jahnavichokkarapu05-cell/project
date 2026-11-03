@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Developer | k* predictor</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css"></head>
+<body data-mode="user">
+<header class="top"><div class="wrap">
+  <a class="brand" href="predict.html"><svg viewBox="0 0 28 28" aria-hidden="true"><rect x="5" y="9" width="14" height="14" rx="1" fill="none" stroke="#1D5C78" stroke-width="2"/><rect x="9" y="5" width="14" height="14" rx="1" fill="none" stroke="#1D5C78" stroke-width="2" opacity=".55"/><circle cx="14" cy="14" r="2.6" fill="#C98512"/></svg><span>k<i>*</i> predictor</span></a>
+  <nav class="nav" aria-label="Pages"><a href="predict.html">Predict</a><a href="batch.html">Batch</a><a href="developer.html" aria-current="page" class="dev-only">Developer</a><a href="research.html">Research</a></nav>
+  <div class="role">Signed in as <b id="rolename"></b> <a href="index.html">Switch role</a></div>
+</div></header>
+<main><div class="wrap">
+<div class="intro"><h1>Developer panel</h1><p>System health, dataset analytics, model training and checkpoints.</p></div>
+<div class="stack">
+<section class="panel"><h2>System health</h2><div class="kpis" id="hkpi"></div><div id="hmodels" class="sub"></div></section>
+<section class="panel"><h2>Dataset</h2><div class="kpis" id="dkpi"></div><div class="grid2"><div><h3 style="font-size:15px">log k* distribution</h3><div id="d1"></div></div><div><h3 style="font-size:15px">Temperature (&deg;C)</h3><div id="d2"></div></div><div><h3 style="font-size:15px">A-site elements (materials)</h3><div id="d3"></div></div></div></section>
+<section class="panel"><h2>Model scores</h2><p class="sub">R&sup2; on materials never seen in training. The test split holds out whole materials, so it is small and noisy; grouped cross-validation is steadier.</p><div class="tablewrap"><table class="t" id="mtab"></table></div></section>
+<section class="panel"><h2>Train a new checkpoint</h2><p class="sub">Trains all four models on the stored dataset, or on a file you upload, with a fixed seed. Nothing changes in the live app until you activate the checkpoint.</p>
+<form id="tform" novalidate><div class="fields"><div class="field"><label for="tok">Developer token</label><input id="tok" type="password" autocomplete="off"><small>Printed in the terminal when the app starts, or the ADMIN_TOKEN you set</small></div>
+<div class="field"><label for="seed">Seed</label><input id="seed" type="number" value="42"></div>
+<div class="field"><label for="dfile">Dataset (optional)</label><input id="dfile" type="file" accept=".xlsx,.csv"></div></div>
+<div class="actions"><button class="btn primary" id="tgo" type="submit">Start training</button><button class="btn ghost" id="rfr" type="button">Refresh</button></div></form>
+<div id="tstat" class="msg" hidden></div>
+<h3 style="font-size:15px;margin-top:20px">Checkpoints</h3><div class="tablewrap"><table class="t" id="ctab"></table></div></section></div>
+</div></main>
+<script>
+(() => {
+  const ROLE = (() => { try { return localStorage.getItem("kstar-role"); } catch { return null; } })();
+  if (ROLE !== "dev") { location.replace(ROLE === "user" ? "predict.html" : "index.html"); return; }
+  document.body.dataset.mode = ROLE;
+  document.getElementById("rolename").textContent = ROLE === "dev" ? "Developer" : "Normal user";
+  const $ = (s, r = document) => r.querySelector(s);
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
+  const bars = (el, labels, vals) => { const mx = Math.max(...vals, 1e-9); el.innerHTML = labels.map((l, i) => `<div class="hb"><span>${esc(l)}</span><i style="width:${(vals[i] / mx * 100).toFixed(0)}%"></i><b>${vals[i]}</b></div>`).join(""); };
+  const H = () => ({ "X-Admin-Token": $("#tok").value });
+  async function loadStats() {
+    const d = await (await api("/api/analytics")).json(), s = d.system;
+    $("#hkpi").innerHTML = [[s.status, "status"], [s.requests, "requests"], [s.errors, "errors"], [s.avg_latency_ms ?? "n/a", "avg ms"], [Math.round(s.uptime_s / 60) + " min", "uptime"], [s.active_checkpoint, "active model set"]].map(([v, l]) => `<div class="kpi"><b>${esc(v)}</b><span>${l}</span></div>`).join("");
+    $("#hmodels").textContent = "Loaded: " + Object.entries(s.models).map(([k, v]) => k + (v ? " yes" : " no")).join(", ") + ". scikit-learn " + s.sklearn + ".";
+    const ds = d.dataset;
+    if (ds) {
+      const r = ds.report;
+      $("#dkpi").innerHTML = [[r.rows_in, "rows in file"], [r.rows_out, "usable rows"], [r.dropped_duplicates, "duplicates dropped"], [r.dropped_missing_or_non_numeric, "bad rows dropped"], [r.materials, "materials"]].map(([v, l]) => `<div class="kpi"><b>${v}</b><span>${l}</span></div>`).join("");
+      const hb = (h) => h.counts.map((_, i) => Math.round(h.edges[i]) + " to " + Math.round(h.edges[i + 1]));
+      bars($("#d1"), ds.logk_hist.counts.map((_, i) => ds.logk_hist.edges[i].toFixed(1)), ds.logk_hist.counts);
+      bars($("#d2"), hb(ds.temp_hist), ds.temp_hist.counts);
+      bars($("#d3"), Object.keys(ds.a_elements || {}), Object.values(ds.a_elements || {}));
+    }
+    const m = d.metrics;
+    if (m) $("#mtab").innerHTML = "<tr><th>Model</th><th>Test R\u00b2</th><th>Test MAE</th><th>Grouped CV R\u00b2</th></tr>" + Object.entries(m.models).map(([k, v]) => `<tr><td>${esc(k.replace("_", " "))}</td><td>${v.test.r2}</td><td>${v.test.mae}</td><td>${v.grouped_cv.r2}</td></tr>`).join("");
+  }
+  async function loadCkpts() {
+    if (!$("#tok").value) return;
+    const r = await api("/api/admin/checkpoints", { headers: H() }), d = await r.json();
+    if (!r.ok) { toast(d.error, "error"); return; }
+    $("#ctab").innerHTML = "<tr><th>Checkpoint</th><th>Rows</th><th>Seed</th><th>Grouped CV R\u00b2 (full SVR / name-only SVR)</th><th></th></tr>" + (d.checkpoints.length ? d.checkpoints.map(c => `<tr><td>${esc(c.name)}</td><td>${c.rows}</td><td>${c.seed}</td><td>${c.grouped_cv_r2.full_svr} / ${c.grouped_cv_r2.name_only_svr}</td><td>${c.active ? "<b>active</b>" : `<button class="btn ghost" data-act="${esc(c.name)}">Activate</button>`}</td></tr>`).join("") : "<tr><td colspan=5>No checkpoints yet.</td></tr>");
+  }
+  $("#ctab").addEventListener("click", async e => {
+    const n = e.target.dataset.act; if (!n) return;
+    const r = await api("/api/admin/activate", { method: "POST", headers: { ...H(), "Content-Type": "application/json" }, body: JSON.stringify({ name: n }) }), d = await r.json();
+    if (!r.ok) { toast(d.error, "error"); return; }
+    toast("Activated " + n + ".", "ok"); loadCkpts(); loadStats();
+  });
+  let poll = null;
+  async function watch() {
+    const r = await api("/api/admin/status", { headers: H() }), s = await r.json(), box = $("#tstat");
+    box.hidden = false; box.textContent = "Training: " + s.status + ". " + s.message;
+    if (s.status === "running") { poll = setTimeout(watch, 2000); return; }
+    $("#tgo").disabled = false; $("#tgo").textContent = "Start training";
+    if (s.status === "done") { toast("Training finished.", "ok"); loadCkpts(); } else if (s.status === "failed") toast(s.message, "error");
+  }
+  $("#tform").addEventListener("submit", async e => {
+    e.preventDefault();
+    if (!$("#tok").value) { toast("Enter the developer token.", "error"); return; }
+    const fd = new FormData(); fd.append("seed", $("#seed").value); if ($("#dfile").files[0]) fd.append("file", $("#dfile").files[0]);
+    $("#tgo").disabled = true; $("#tgo").textContent = "Training\u2026";
+    const r = await api("/api/admin/train", { method: "POST", headers: H(), body: fd }), d = await r.json();
+    if (!r.ok) { toast(d.error, "error"); $("#tgo").disabled = false; $("#tgo").textContent = "Start training"; return; }
+    toast("Training started: " + d.started, "info"); watch();
+  });
+  $("#rfr").onclick = () => { loadCkpts(); loadStats(); };
+  loadStats().catch(() => toast("Could not load analytics.", "error"));
+})();
+</script></body></html>

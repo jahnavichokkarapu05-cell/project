@@ -1,0 +1,9 @@
+flask>=3.0
+scikit-learn   # pin to the exact version used in your notebook (pickles are version-sensitive)
+pandas
+numpy
+joblib
+shap           # optional: per-prediction SHAP bars for the Random Forest in developer mode
+openpyxl       # only needed by train.py to read the .xlsx dataset
+gunicorn       # only for hosting (Dockerfile)
+huggingface_hub # optional: model hosting on the Hub

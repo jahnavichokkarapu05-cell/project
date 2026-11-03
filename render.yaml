@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: kstar-api
+    runtime: docker
+    envVars:
+      - key: ADMIN_TOKEN
+        generateValue: true
+      - key: CORS_ORIGINS
+        value: "*"   # replace with your frontend URL once deployed

@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Research | k* predictor</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css"></head>
+<body data-mode="user">
+<header class="top"><div class="wrap">
+  <a class="brand" href="predict.html"><svg viewBox="0 0 28 28" aria-hidden="true"><rect x="5" y="9" width="14" height="14" rx="1" fill="none" stroke="#1D5C78" stroke-width="2"/><rect x="9" y="5" width="14" height="14" rx="1" fill="none" stroke="#1D5C78" stroke-width="2" opacity=".55"/><circle cx="14" cy="14" r="2.6" fill="#C98512"/></svg><span>k<i>*</i> predictor</span></a>
+  <nav class="nav" aria-label="Pages"><a href="predict.html">Predict</a><a href="batch.html">Batch</a><a href="developer.html" class="dev-only">Developer</a><a href="research.html" aria-current="page">Research</a></nav>
+  <div class="role">Signed in as <b id="rolename"></b> <a href="index.html">Switch role</a></div>
+</div></header>
+<main><div class="wrap">
+<div id="view-research">
+      <div class="intro">
+        <h1>The research behind the model</h1>
+        <p>Two papers frame this project: a review of how machine learning speeds up perovskite discovery, and an experiment that took an ML prediction all the way to a working fuel cell cathode.</p>
+      </div>
+      <div class="papers">
+        <article class="panel paper">
+          <h2>Accelerating perovskite materials discovery and correlated energy applications through artificial intelligence</h2>
+          <div class="meta">Liang et al., Energy Materials 2022;2:200016 (review)</div>
+          <ul>
+            <li>Lays out the ML workflow for perovskites: data preparation, feature engineering, model selection, evaluation, application.</li>
+            <li>Surveys open databases (Materials Project, OQMD, CMR, ICSD and others) and the need for high-quality data.</li>
+            <li>Covers interpretable models (tree models, SHAP, CGCNN) and why interpretation should agree with physics and chemistry.</li>
+            <li>Reports ML stability predictions for perovskite oxides, including candidate SOFC cathodes such as BaFe<sub>0.25</sub>V<sub>0.75</sub>O<sub>3</sub> and La<sub>0.5</sub>Y<sub>0.5</sub>Co<sub>0.5</sub>Mn<sub>0.5</sub>O<sub>3</sub>.</li>
+            <li>Names the open challenges: small datasets, black-box models, and the gap between prediction and synthesis.</li>
+          </ul>
+        </article>
+        <article class="panel paper">
+          <h2>Machine learning-accelerated discovery of novel high-entropy spinel oxide cathodes for solid oxide fuel cells</h2>
+          <div class="meta">Ma et al., Fuel 404 (2026) 136190</div>
+          <ul>
+            <li>Trains XGBoost, Random Forest and Naive Bayes on 66 solid-state-reaction samples with 10 features to predict single-phase formation; ADASYN balances the classes.</li>
+            <li>XGBoost reaches 88% test accuracy and AUC 0.974; SHAP points to precursor volume, electronegativity and density deviations as key drivers.</li>
+            <li>Of five ML-selected compositions, two form single-phase spinels and are compatible with YSZ and GDC electrolytes.</li>
+            <li>Mn<sub>0.6</sub>Fe<sub>0.6</sub>Co<sub>0.6</sub>Cu<sub>0.6</sub>Mg<sub>0.6</sub>O<sub>4</sub> reaches a polarization resistance of 0.87 &Omega;&middot;cm&sup2; and a peak power density of 627 mW&middot;cm<sup>-2</sup> at 800 &deg;C.</li>
+          </ul>
+        </article>
+      </div>
+
+      <section class="map dev-only">
+        <h2>How the notebook follows the review's workflow</h2>
+        <table>
+          <thead><tr><th>Stage (Liang et al.)</th><th>In the k* notebook</th><th>In this app</th></tr></thead>
+          <tbody>
+            <tr><td>Data preparation</td><td>Excel dataset loaded, duplicates dropped, rows without LogKstar removed</td><td>Not exposed; training happens in the notebook</td></tr>
+            <tr><td>Feature engineering</td><td>Numeric descriptors only; composition, A and B identifiers dropped; features standardized for the SVR</td><td>Input form, column reordering and the StandardScaler stage</td></tr>
+            <tr><td>Model selection</td><td>SVR (rbf, C=10, epsilon=0.1) and Random Forest (100 trees)</td><td>Model selector in developer mode</td></tr>
+            <tr><td>Evaluation</td><td>80/20 split grouped by material composition, 5-fold GroupKFold, MAE, R&sup2;, Pearson r</td><td>Not exposed; metrics live in the notebook output</td></tr>
+            <tr><td>Interpretation</td><td>SHAP on the Random Forest</td><td>Per-prediction SHAP bars when the RF model and the shap package are available</td></tr>
+            <tr><td>Application</td><td>Saved pipeline predicts LogKstar from raw inputs</td><td>The prediction endpoint and this page</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+</div></main>
+<script src="config.js"></script><script src="ui.js"></script>
+<script>
+(() => {
+  const ROLE = (() => { try { return localStorage.getItem("kstar-role"); } catch { return null; } })();
+  if (ROLE !== "dev" && ROLE !== "user") { location.replace("index.html"); return; }
+  document.body.dataset.mode = ROLE;
+  document.getElementById("rolename").textContent = ROLE === "dev" ? "Developer" : "Normal user";
+
+})();
+</script></body></html>

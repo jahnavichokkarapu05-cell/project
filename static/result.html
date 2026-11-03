@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Result | k* predictor</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css"></head>
+<body data-mode="user">
+<header class="top"><div class="wrap">
+  <a class="brand" href="predict.html"><svg viewBox="0 0 28 28" aria-hidden="true"><rect x="5" y="9" width="14" height="14" rx="1" fill="none" stroke="#1D5C78" stroke-width="2"/><rect x="9" y="5" width="14" height="14" rx="1" fill="none" stroke="#1D5C78" stroke-width="2" opacity=".55"/><circle cx="14" cy="14" r="2.6" fill="#C98512"/></svg><span>k<i>*</i> predictor</span></a>
+  <nav class="nav" aria-label="Pages"><a href="predict.html" aria-current="page">Predict</a><a href="batch.html">Batch</a><a href="developer.html" class="dev-only">Developer</a><a href="research.html">Research</a></nav>
+  <div class="role">Signed in as <b id="rolename"></b> <a href="index.html">Switch role</a></div>
+</div></header>
+<main><div class="wrap">
+<div class="crumbs"><a href="predict.html">&larr; Back to inputs</a></div>
+<div class="intro"><h1>Your prediction</h1></div>
+<section class="panel" aria-labelledby="h-out" style="max-width:860px">
+  <h2 id="h-out">Predicted k*</h2>
+  <div id="result"><div class="empty"><strong>No prediction yet</strong>Go back and run the model first.</div></div>
+  <div class="actions" style="margin-top:22px"><a class="btn primary" href="predict.html" style="text-decoration:none;display:inline-block">Predict another material</a></div>
+</section>
+<section class="flow dev-only" id="flow"><h2>What happened to your input</h2><div id="stages"></div></section>
+</div></main>
+<script src="config.js"></script><script src="ui.js"></script>
+<script>
+(() => {
+  const ROLE = (() => { try { return localStorage.getItem("kstar-role"); } catch { return null; } })();
+  if (ROLE !== "dev" && ROLE !== "user") { location.replace("index.html"); return; }
+  document.body.dataset.mode = ROLE;
+  document.getElementById("rolename").textContent = ROLE === "dev" ? "Developer" : "Normal user";
+let schema = null;
+  let stored = null;
+  try { stored = JSON.parse(sessionStorage.getItem("kstar-last")); } catch {}
+  if (!stored) { location.replace("predict.html"); return; }
+  schema = stored.schema;
+  const $ = (s, r = document) => r.querySelector(s);
+  /* ---------- rendering ---------- */
+  const hasTemp = () => true;
+  const tempToInv = c => 1000 / (c + 273.15);
+  const invToTemp = i => 1000 / i - 273.15;
+  const sci = x => {
+    if (!isFinite(x) || x === 0) return "0";
+    const e = Math.floor(Math.log10(Math.abs(x)));
+    return `${(x / 10 ** e).toFixed(2)} \u00d7 10<sup>${e}</sup>`;
+  };
+  const esc = s => String(s).replace(/[&<>]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;" }[c]));
+
+  function render({ payload, data, roundtrip }){
+    renderResult(payload, data);
+    if (document.body.dataset.mode === "dev") renderStages(payload, data, roundtrip);
+  }
+
+  function renderResult(payload, d){
+    const [lo, hi] = schema.scale;
+    const pos = Math.max(0, Math.min(1, (d.log_kstar - lo) / (hi - lo))) * 100;
+    $("#result").innerHTML = `
+      <div class="kicker">Predicted k*</div>
+      <div class="big">${sci(d.kstar)}</div>
+      <p class="plain">log<sub>10</sub> k* = <strong>${d.log_kstar.toFixed(2)}</strong>. A higher value means the surface exchanges oxygen faster.</p>
+      <div class="scale" role="img" aria-label="Position of the prediction on a slower to faster scale">
+        <div class="track"><div class="pin" style="left:${pos}%"></div></div>
+        <div class="ends"><span>slower (${lo})</span><span>faster (${hi})</span></div>
+      </div>
+      ${d.sweep ? `<div class="chart"><h3>How it changes with temperature</h3>${chart(d, payload)}<p class="note">Same material, temperature varied from ${d.sweep[0].temp_c} to ${d.sweep.at(-1).temp_c} &deg;C.</p></div>` : ""}
+      ${(d.warnings && d.warnings.length) ? `<div class="msg" role="alert"><strong>Outside the training data:</strong><br>${d.warnings.map(esc).join("<br>")}<br>Treat this prediction as unreliable.</div>` : ""}
+      <p class="caveat">This is a model estimate from a limited dataset. Use it to compare and shortlist materials, then confirm by measurement.</p>`;
+  }
+
+  function chart(d, payload){
+    const W = 560, H = 290, m = { l: 52, r: 18, t: 16, b: 50 };
+    const pts = d.sweep.map(s => ({ x: s.inv_t, y: s.log_kstar }));
+    const cur = payload.values["1000/T"] != null ? { x: payload.values["1000/T"], y: d.log_kstar } : null;
+    const all = cur ? pts.concat(cur) : pts;
+    let x0 = Math.min(...all.map(p => p.x)), x1 = Math.max(...all.map(p => p.x));
+    let y0 = Math.min(...all.map(p => p.y)), y1 = Math.max(...all.map(p => p.y));
+    const px = (x1 - x0) * .06 || .05, py = (y1 - y0) * .15 || .5;
+    x0 -= px; x1 += px; y0 -= py; y1 += py;
+    const X = x => m.l + (x - x0) / (x1 - x0) * (W - m.l - m.r);
+    const Y = y => H - m.b - (y - y0) / (y1 - y0) * (H - m.t - m.b);
+    const line = pts.map((p, i) => (i ? "L" : "M") + X(p.x).toFixed(1) + " " + Y(p.y).toFixed(1)).join(" ");
+    const yt = [0,1,2,3,4].map(i => y0 + (y1 - y0) * i / 4);
+    const xt = [0,1,2,3,4].map(i => x0 + (x1 - x0) * i / 4);
+    return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Predicted log k* against inverse temperature">
+      ${yt.map(v => `<line x1="${m.l}" x2="${W-m.r}" y1="${Y(v)}" y2="${Y(v)}" stroke="#DCE6E6"/><text x="${m.l-8}" y="${Y(v)+4}" text-anchor="end" font-size="11" fill="#586C73">${v.toFixed(1)}</text>`).join("")}
+      ${xt.map(v => `<text x="${X(v)}" y="${H-m.b+16}" text-anchor="middle" font-size="11" fill="#586C73">${v.toFixed(2)}</text><text x="${X(v)}" y="${H-m.b+30}" text-anchor="middle" font-size="10" fill="#8A9BA0">${Math.round(invToTemp(v))}&deg;C</text>`).join("")}
+      <line x1="${m.l}" x2="${m.l}" y1="${m.t}" y2="${H-m.b}" stroke="#13252C"/>
+      <line x1="${m.l}" x2="${W-m.r}" y1="${H-m.b}" y2="${H-m.b}" stroke="#13252C"/>
+      <path d="${line}" fill="none" stroke="#1D5C78" stroke-width="2.5"/>
+      ${pts.map(p => `<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="3" fill="#1D5C78"/>`).join("")}
+      ${cur ? `<circle cx="${X(cur.x)}" cy="${Y(cur.y)}" r="7" fill="#C98512" stroke="#fff" stroke-width="2"/>` : ""}
+      <text x="${(m.l + W - m.r) / 2}" y="${H-4}" text-anchor="middle" font-size="12" fill="#13252C">1000 / T (K&#8315;&sup1;)</text>
+      <text transform="translate(14 ${(m.t + H - m.b) / 2}) rotate(-90)" text-anchor="middle" font-size="12" fill="#13252C">log&#8321;&#8320; k*</text>
+    </svg>`;
+  }
+
+  function bars(rows, signed){
+    const max = Math.max(...rows.map(r => Math.abs(r.v)), 1e-9);
+    return `<div class="bars">${rows.map(r => {
+      const w = Math.abs(r.v) / max * 50;
+      const style = r.v >= 0 ? `left:50%;width:${w}%;background:#1D5C78` : `left:${50 - w}%;width:${w}%;background:#C98512`;
+      return `<div class="bar"><span class="nm" title="${esc(r.name)}">${esc(r.name)}</span><span class="tr"><span class="zero"></span><span class="fill" style="${style}"></span></span><span class="num">${r.v >= 0 && signed ? "+" : ""}${r.v.toFixed(2)}</span></div>`;
+    }).join("")}</div>`;
+  }
+
+  function stage(title, sub, body){
+    return `<details class="stage" open><summary>${title}<span>${sub}</span></summary><div class="body">${body}</div></details>`;
+  }
+
+  function renderStages(payload, d, roundtrip){
+    const t = d.trace;
+    const model = d.model;
+    const s = [];
+
+    s.push(stage("Form to JSON", "the browser sends raw values", `
+      <pre>${esc(JSON.stringify(payload, null, 2))}</pre>`));
+
+    s.push(stage("Build the DataFrame", "columns reordered to the training order", `
+      <pre>def frame_from(values):
+    names = list(pipeline.feature_names_in_)
+    row = {n: float(values[n]) for n in names}
+    return pd.DataFrame([row], columns=names)</pre>
+      <div class="kv"><span>features <b>${t.columns.length}</b></span><span>first <b>${esc(t.columns[0])}</b></span><span>last <b>${esc(t.columns.at(-1))}</b></span></div>`));
+
+    if (model === "svr") {
+      const rows = t.columns.map((c, i) => ({ name: c, v: t.scaled[i] })).sort((a, b) => Math.abs(b.v) - Math.abs(a.v)).slice(0, 8);
+      s.push(stage("StandardScaler", "each feature becomes a z-score", `
+        <div class="cols"><div><h4>Code</h4><pre>scaler = StandardScaler().fit(X_train)
+z = scaler.transform(X_new)   # (x - mean) / std</pre></div>
+        <div><h4>Largest z-scores for this input</h4>${bars(rows, true)}</div></div>`));
+      s.push(stage("SVR", "radial basis function regression", `
+        <pre>SVR(kernel="${t.params.kernel}", C=${t.params.C}, epsilon=${t.params.epsilon})
+log_kstar = svr.predict(z)</pre>
+        <div class="kv"><span>support vectors <b>${t.n_support_vectors}</b></span><span>model time <b>${t.latency_ms} ms</b></span></div>`));
+    } else {
+      const contrib = (t.contributions || []).map(c => ({ name: c.feature, v: c.contribution }));
+      s.push(stage("Random Forest", "no scaling needed for trees", `
+        <div class="cols"><div><h4>Code</h4><pre>RandomForestRegressor(n_estimators=100, random_state=42)
+log_kstar = rf.predict(X_new)</pre>
+        <div class="kv"><span>trees <b>${t.n_trees}</b></span><span>model time <b>${t.latency_ms} ms</b></span></div></div>
+        <div><h4>SHAP contribution to this prediction</h4>${contrib.length ? bars(contrib, true) : '<p class="sub">Install the shap package to see per-feature contributions.</p>'}</div></div>`));
+    }
+
+    s.push(stage("Output", "log value and k*", `
+      <pre>${esc(JSON.stringify({ log_kstar: d.log_kstar, kstar: d.kstar }, null, 2))}</pre>
+      <p class="sub">k* is computed as 10<sup>log_kstar</sup>, assuming the notebook's LogKstar is a base-10 logarithm.</p>`));
+
+    if (d.sweep) {
+      s.push(stage("Temperature sweep", `${d.sweep.length} extra predictions`, `
+        <pre>for c in range(600, 1001, 50):
+    row["1000/T"] = 1000 / (c + 273.15)
+    model.predict(row)</pre>
+        <div class="kv"><span>round trip <b>${Math.round(roundtrip)} ms</b></span><span>sklearn <b>${esc(schema.sklearn_version)}</b></span></div>`));
+    }
+
+    $("#stages").innerHTML = s.join("");
+    requestAnimationFrame(() => document.querySelectorAll(".stage").forEach((el, i) => setTimeout(() => el.classList.add("done"), i * 120)));
+  }
+
+  
+  render({ payload: stored.payload, data: stored.data, roundtrip: stored.roundtrip });
+  if (stored.formula) {
+    const fmt = o => Object.entries(o).map(([e, f]) => esc(e) + " " + (+f.toFixed(3))).join(", ");
+    const s = stored.sites || { A: {}, B: {} };
+    $("#result").insertAdjacentHTML("afterbegin", `<p class="plain" style="margin-bottom:14px"><strong>${esc(stored.formula)}</strong> at ${esc(stored.temp_c)} &deg;C, predicted from the composition alone (A-site: ${fmt(s.A)}; B-site: ${fmt(s.B)}).</p>`);
+  }
+
+})();
+</script></body></html>

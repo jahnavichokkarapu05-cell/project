@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Batch | k* predictor</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css"></head>
+<body data-mode="user">
+<header class="top"><div class="wrap">
+  <a class="brand" href="predict.html"><svg viewBox="0 0 28 28" aria-hidden="true"><rect x="5" y="9" width="14" height="14" rx="1" fill="none" stroke="#1D5C78" stroke-width="2"/><rect x="9" y="5" width="14" height="14" rx="1" fill="none" stroke="#1D5C78" stroke-width="2" opacity=".55"/><circle cx="14" cy="14" r="2.6" fill="#C98512"/></svg><span>k<i>*</i> predictor</span></a>
+  <nav class="nav" aria-label="Pages"><a href="predict.html">Predict</a><a href="batch.html" aria-current="page">Batch</a><a href="developer.html" class="dev-only">Developer</a><a href="research.html">Research</a></nav>
+  <div class="role">Signed in as <b id="rolename"></b> <a href="index.html">Switch role</a></div>
+</div></header>
+<main><div class="wrap">
+<div class="intro"><h1>Predict a list of materials</h1><p class="explorer-only">Upload a CSV or Excel file with two columns, formula and temp_c. Each row gets a predicted k*.</p><p class="dev-only">POST /api/upload as multipart form data, up to 500 rows, composition-only model. Rows that fail return an error string instead of a value.</p></div>
+<section class="panel stack" style="max-width:980px">
+  <form id="bform" novalidate><div class="fields">
+    <div class="field"><label for="bfile">File (.csv or .xlsx)</label><input id="bfile" type="file" accept=".csv,.xlsx,.xls"></div>
+    <div class="field dev-only"><label for="bmodel">Model</label><select id="bmodel"><option value="svr">SVR pipeline</option><option value="rf">Random Forest</option></select></div></div>
+    <div class="actions"><button class="btn primary" id="bgo" type="submit">Predict file</button>
+    <a class="btn ghost" id="tmpl" download="kstar_template.csv" href="data:text/csv;charset=utf-8,formula%2Ctemp_c%0ALaCoO3%2C700%0ALa0.6Sr0.4Co0.2Fe0.8O3%2C800%0ASm0.5Sr0.5CoO3%2C886%0A" style="text-decoration:none;display:inline-block">Download a template</a></div>
+  </form>
+  <div id="bres" hidden><div class="kpis" id="bkpi"></div><h2 style="font-size:18px">Predicted log k*</h2><div id="bchart"></div><div class="tablewrap" style="margin-top:16px"><table class="t" id="btab"></table></div></div>
+</section>
+</div></main>
+<script>
+(() => {
+  const ROLE = (() => { try { return localStorage.getItem("kstar-role"); } catch { return null; } })();
+  if (ROLE !== "dev" && ROLE !== "user") { location.replace("index.html"); return; }
+  document.body.dataset.mode = ROLE;
+  document.getElementById("rolename").textContent = ROLE === "dev" ? "Developer" : "Normal user";
+  const $ = (s, r = document) => r.querySelector(s);
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
+  const bars = (el, labels, vals) => { const mx = Math.max(...vals, 1e-9); el.innerHTML = labels.map((l, i) => `<div class="hb"><span>${esc(l)}</span><i style="width:${(vals[i] / mx * 100).toFixed(0)}%"></i><b>${vals[i]}</b></div>`).join(""); };
+  $("#bform").addEventListener("submit", async e => {
+    e.preventDefault();
+    const f = $("#bfile").files[0];
+    if (!f) { toast("Choose a file first.", "error"); return; }
+    const btn = $("#bgo"); btn.disabled = true; btn.textContent = "Predicting\u2026";
+    try {
+      const fd = new FormData(); fd.append("file", f); if (ROLE === "dev") fd.append("model", $("#bmodel").value);
+      const r = await api("/api/upload", { method: "POST", body: fd }); const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "Upload failed.");
+      $("#bkpi").innerHTML = `<div class="kpi"><b>${d.n}</b><span>rows</span></div><div class="kpi"><b>${d.n_ok}</b><span>predicted</span></div><div class="kpi"><b>${d.n - d.n_ok}</b><span>need fixing</span></div>`;
+      const ok = d.rows.filter(x => x.log_kstar !== undefined);
+      bars($("#bchart"), ok.map(x => x.formula.slice(0, 12)), ok.map(x => +(x.log_kstar + 11).toFixed(2)));
+      $("#bchart").insertAdjacentHTML("afterbegin", '<small class="sub">Bar length shows log k* + 11, so longer means faster. Exact values are in the table.</small>');
+      $("#btab").innerHTML = "<tr><th>Formula</th><th>T (\u00b0C)</th><th>log k*</th><th>k* (cm/s)</th><th>Note</th></tr>" + d.rows.map(x => `<tr><td>${esc(x.formula)}</td><td>${esc(x.temp_c ?? "")}</td><td>${x.log_kstar === undefined ? "" : x.log_kstar.toFixed(2)}</td><td>${x.kstar === undefined ? "" : x.kstar.toExponential(2)}</td><td>${esc(x.error || (x.warnings || []).join("; "))}</td></tr>`).join("");
+      $("#bres").hidden = false; toast(`Predicted ${d.n_ok} of ${d.n} rows.`, d.n_ok === d.n ? "ok" : "info");
+    } catch (ex) { toast(ex.message, "error"); }
+    finally { btn.disabled = false; btn.textContent = "Predict file"; }
+  });
+})();
+</script></body></html>

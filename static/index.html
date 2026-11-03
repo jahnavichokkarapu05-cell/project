@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in | k* predictor</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css"></head>
+<body>
+<div class="hero">
+  <section class="hero-art">
+    <div>
+      <h1>How fast can a perovskite exchange oxygen?</h1>
+      <p>Predict the surface exchange coefficient k* of cathode materials for solid oxide fuel cells, from a model trained on measured data.</p>
+    </div>
+    <svg class="cell" viewBox="30 20 250 240" role="img" aria-label="ABO3 perovskite unit cell">
+      <g class="oct"><path d="M155 67 L130 160 L85 137 Z M155 67 L130 160 L225 137 Z M155 207 L130 160 L85 137 Z M155 207 L130 160 L225 137 Z M155 67 L180 115 L85 137 Z M155 67 L180 115 L225 137 Z M155 207 L180 115 L85 137 Z M155 207 L180 115 L225 137 Z"/></g>
+      <path class="edge" d="M60 90H200V230H60Z M110 45H250V185H110Z M60 90L110 45 M200 90L250 45 M200 230L250 185 M60 230L110 185"/>
+      <g class="a"><circle cx="60" cy="90" r="9"/><circle cx="200" cy="90" r="9"/><circle cx="200" cy="230" r="9"/><circle cx="60" cy="230" r="9"/><circle cx="110" cy="45" r="9"/><circle cx="250" cy="45" r="9"/><circle cx="250" cy="185" r="9"/><circle cx="110" cy="185" r="9"/></g>
+      <circle class="b" cx="155" cy="137" r="10"/>
+      <g class="o"><circle cx="130" cy="160" r="6"/><circle cx="180" cy="115" r="6"/><circle cx="85" cy="137" r="6"/><circle cx="225" cy="137" r="6"/><circle cx="155" cy="67" r="6"/><circle cx="155" cy="207" r="6"/></g>
+    </svg>
+    <small>ABO&#8323; unit cell: A-site cations at the corners, the B-site cation at the centre, oxygen on the face centres.</small>
+  </section>
+  <section class="hero-form">
+    <h2>Sign in</h2>
+    <p class="sub">Choose how you want to use the predictor.</p>
+    <button class="role-card" id="pick-user"><h3>Normal user</h3><p>Enter a material and temperature, then get the predicted k* and how it changes with temperature.</p></button>
+    <button class="role-card dev" id="pick-dev"><h3>Developer</h3><p>The same prediction, plus every step behind it: the request, column order, scaling, model and output, with code.</p></button>
+  </section>
+</div>
+<script>
+  const go = role => { try { localStorage.setItem("kstar-role", role); } catch {} location.href = "predict.html"; };
+  document.getElementById("pick-user").onclick = () => go("user");
+  document.getElementById("pick-dev").onclick = () => go("dev");
+</script></body></html>

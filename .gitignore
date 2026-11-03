@@ -1,0 +1,4 @@
+.env
+models/checkpoints/
+data/upload_*
+__pycache__/
